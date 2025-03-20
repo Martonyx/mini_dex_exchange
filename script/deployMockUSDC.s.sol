@@ -6,7 +6,6 @@ import {USDC} from "../src/Invnex_token/mockUSDC.sol";
 
 contract DeployUSDC is Script {
     function run() external {
-        // uint256 initialSupply = 10000000;
 
         vm.startBroadcast();
 

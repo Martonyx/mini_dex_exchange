@@ -6,11 +6,10 @@ import {SimpleCoin1} from "../src/Invnex_token/SimpleToken1.sol";
 
 contract DeploySimpleCoin is Script {
     function run() external {
-        uint256 initialSupply = 10000000;
 
         vm.startBroadcast();
 
-        SimpleCoin1 simpleToken = new SimpleCoin1(initialSupply);
+        SimpleCoin1 simpleToken = new SimpleCoin1();
 
         vm.stopBroadcast();
 
