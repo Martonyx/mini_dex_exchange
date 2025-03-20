@@ -88,11 +88,11 @@ contract Router is ReentrancyGuard {
         require(block.timestamp <= deadline, "Router: EXPIRED");
         require(_path.length == 2, "Router: INVALID_PATH");
 
-        (address[] memory path, bool isEtkPath) = _adjustPath(_path);
+        (address[] memory path, bool isUSYTPath) = _adjustPath(_path);
         address inputToken = path[0];
         address outputToken = path[path.length - 1];
 
-        if (isEtkPath) {
+        if (isUSYTPath) {
             address[] memory newAPath = path;
             newAPath[0] = inputToken;
             newAPath[1] = USTY;
@@ -213,7 +213,9 @@ contract Router is ReentrancyGuard {
 
         if (oraclePriceA > 0 && oraclePriceB > 0) {
             return (oraclePriceA, oraclePriceB);
-        }   
+        } else {
+        revert("Router: Invalid oracle prices");
+        }
     }
 
     function _getRecipient(
@@ -248,19 +250,19 @@ contract Router is ReentrancyGuard {
 
     function _adjustPath(address[] memory _path) private view returns (address[] memory, bool) {
         address[] memory path = _path;
-        bool isEtkPath;
+        bool isUSYTPath;
 
         if (_pairFor(_path[0], _path[1]) != address(0)) {
-            isEtkPath = false;
-            return (_path, isEtkPath);
+            isUSYTPath = false;
+            return (_path, isUSYTPath);
         }
 
         if (_pairFor(_path[0], USTY) != address(0) && _pairFor(USTY, _path[1]) != address(0)) {
-            isEtkPath = true;
+            isUSYTPath = true;
         } else {
             revert("Router: NO_SWAP_PATH_AVAILABLE");
         }
 
-        return (path, isEtkPath);
+        return (path, isUSYTPath);
     }
 }

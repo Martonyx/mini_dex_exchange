@@ -9,8 +9,7 @@ contract USYT is ERC20 {
 
     event ConverterUpdated(address indexed newConverter);
 
-    constructor(uint256 initialSupply) ERC20("Invnex USYT", "USYT") {
-        _mint(msg.sender, initialSupply * 10**decimals());
+    constructor() ERC20("Invnex USYT", "USYT") {
         owner = msg.sender;
     }
 
@@ -23,13 +22,11 @@ contract USYT is ERC20 {
 
     function mint(address to, uint256 amount) external {
         require(msg.sender == owner || msg.sender == converter, "UnAuthourized");
-        uint256 mintAmount = amount * (10**decimals());
-        _mint(to, mintAmount);
+        _mint(to, amount);
     }
 
     function burn(address account, uint256 amount) public {
-        uint256 burnAmount = amount * (10**decimals());
-        _burn(account, burnAmount);
+        _burn(account, amount);
     }
 
     function TransferOwnership(address newOwner) external {
