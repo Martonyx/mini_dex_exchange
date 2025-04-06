@@ -4,9 +4,9 @@ pragma solidity 0.8.20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IFactory} from "../interfaces/IFactory.sol";
-import {Structs} from "../utils/dexErrors.sol";
+import {Structs, DexErrors} from "../utils/DexUtils.sol";
 
-contract Pair is ERC20 {
+contract Pair is ERC20, DexErrors {
     address public immutable token0;
     address public immutable token1;
     address public router;    
@@ -26,17 +26,17 @@ contract Pair is ERC20 {
     event Sync(uint112 reserve0, uint112 reserve1);
 
     modifier onlyValidAmounts(uint256 amount0, uint256 amount1) {
-        require(amount0 > 0 || amount1 > 0, "Pair: INSUFFICIENT_AMOUNT");
+        if (amount0 == 0 && amount1 == 0) revert Pair_InsufficientAmount();
         _;
     }
 
     modifier onlyRouter() {
         address _router = IFactory(factory).router();
-        require(msg.sender == _router, "Pair: FORBIDDEN");
+        if (msg.sender != _router) revert Pair_CallerNotRouter();
         _;
     }
 
-    constructor(address _token0, address _token1, address _factory) ERC20("Liquidity Token", "LP") {
+    constructor(address _token0, address _token1, address _factory) ERC20("Invnex Liquidity Token", "ILP") {
         token0 = _token0;
         token1 = _token1;
         factory = _factory;
@@ -50,7 +50,7 @@ contract Pair is ERC20 {
         uint256 amount0 = balance0 - _reserve0;
         uint256 amount1 = balance1 - _reserve1;
 
-        require(amount0 > 0 && amount1 > 0, "Pair: INSUFFICIENT_LIQUIDITY_ADDED");
+        if (amount0 == 0 || amount1 == 0) revert Pair_InsufficientLiquidityAdded();
 
         if (totalSupply() == 0) {
             liquidity = sqrt(amount0 * amount1);
@@ -58,7 +58,7 @@ contract Pair is ERC20 {
             liquidity = min((amount0 * totalSupply()) / _reserve0, (amount1 * totalSupply()) / _reserve1);
         }
 
-        require(liquidity > 0, "Pair: INSUFFICIENT_LIQUIDITY_MINTED");
+        if (liquidity == 0) revert Pair_InsufficientLiquidityMinted();
 
         _mint(to, liquidity); 
         _update(balance0, balance1);
@@ -67,7 +67,7 @@ contract Pair is ERC20 {
 
     function burn(address to, uint256 amount) external onlyRouter returns (uint256 amount0, uint256 amount1) {
         uint256 liquidity = balanceOf(to);
-        require(liquidity >= amount, "Pair: INSUFFICIENT_LIQUIDITY");
+        if (liquidity < amount) revert Pair_InsufficientLiquidity();
 
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
@@ -75,7 +75,7 @@ contract Pair is ERC20 {
         amount0 = (amount * balance0) / totalSupply();
         amount1 = (amount * balance1) / totalSupply();
 
-        require(amount0 > 0 && amount1 > 0, "Pair: INSUFFICIENT_AMOUNT_BURNED");
+        if (amount0 == 0 || amount1 == 0) revert Pair_InsufficientAmountBurned();
 
         _burn(to, amount);
         IERC20(token0).transfer(to, amount0);
@@ -89,22 +89,16 @@ contract Pair is ERC20 {
     }
 
     function swap(Structs.PairSwapParams memory params) external onlyRouter onlyValidAmounts(params.amount0Out, params.amount1Out) {
-        require(params.recipient != address(0), "Pair: INVALID_TO");
-        require(params.slippageTolerance < 1000, "Pair: INVALID_SLIPPAGE_TOLERANCE");
+        if (params.recipient == address(0)) revert Pair_InvalidTo();
+        if (params.slippageTolerance >= 1000) revert Pair_InvalidSlippageTolerance();
 
         (uint112 _reserve0, uint112 _reserve1,) = getReserves();
-        require(params.amount0Out < _reserve0 && params.amount1Out < _reserve1, "Pair: INSUFFICIENT_LIQUIDITY");
+        if (params.amount0Out >= _reserve0 || params.amount1Out >= _reserve1) revert Pair_InsufficientLiquidity();
 
         SwapDetails memory details = _calculateAmountsIn(
             _reserve0, _reserve1,
             params
         );
-
-        params.minAmount0Out = params.amount0Out * (1000 - params.slippageTolerance) / 1000;
-        params.minAmount1Out = params.amount1Out * (1000 - params.slippageTolerance) / 1000;
-
-        require(params.amount0Out >= params.minAmount0Out, "Pair: SLIPPAGE_EXCEEDED");
-        require(params.amount1Out >= params.minAmount1Out, "Pair: SLIPPAGE_EXCEEDED");
         
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
@@ -112,13 +106,13 @@ contract Pair is ERC20 {
         uint256 balanceA = balance0 - params.amount0Out - params.fee0;
         uint256 balanceB = balance1 - params.amount1Out - params.fee1;
 
-        require(details.amount0In > 0 || details.amount1In > 0, "Pair: INSUFFICIENT_INPUT_AMOUNT");
+        if (details.amount0In == 0 && details.amount1In == 0) revert Pair_InsufficientInputAmount();
         
-        require((balanceA * balanceB) >= uint256(_reserve0) * uint256(_reserve1), "Pair: K");
+        if (balanceA * balanceB < uint256(_reserve0) * uint256(_reserve1)) revert Pair_K();
         
         _processSwapTransfers(params.amount0Out, params.amount1Out, params.fee0, params.fee1, params.recipient);
 
-        _update(balance0, balance1);
+        _update(balanceA, balanceB);
     }
     
     function _processSwapTransfers(
@@ -132,9 +126,18 @@ contract Pair is ERC20 {
         if (amount1AfterFee > 0) IERC20(token1).transfer(to, amount1AfterFee);
 
         address _feeTo = IFactory(factory).feeTo();
-        require(_feeTo != address(0), "pair: FeeTo_not_set");
+        if (_feeTo == address(0)) revert Pair_FeeToNotSet();
         if (fee0 > 0) IERC20(token0).transfer(_feeTo, fee0);
         if (fee1 > 0) IERC20(token1).transfer(_feeTo, fee1);
+    }
+
+    function _update(uint256 balance0, uint256 balance1) private {
+        if (balance0 > type(uint112).max || balance1 > type(uint112).max) revert Pair_Overflow();
+
+        reserve0 = uint112(balance0);
+        reserve1 = uint112(balance1);
+        blockTimestampLast = uint32(block.timestamp);
+        emit Sync(reserve0, reserve1);
     }
 
     function _calculateAmountsIn(uint112 _reserve0, uint112 _reserve1, Structs.PairSwapParams memory params)
@@ -150,15 +153,6 @@ contract Pair is ERC20 {
             : 0;
 
         return details;
-    }
-
-    function _update(uint256 balance0, uint256 balance1) private {
-        require(balance0 <= type(uint112).max && balance1 <= type(uint112).max, "Pair: OVERFLOW");
-
-        reserve0 = uint112(balance0);
-        reserve1 = uint112(balance1);
-        blockTimestampLast = uint32(block.timestamp);
-        emit Sync(reserve0, reserve1);
     }
 
     function getReserves() public view returns (uint112, uint112, uint32) {

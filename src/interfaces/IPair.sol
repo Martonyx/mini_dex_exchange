@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import {Structs} from "../utils/dexErrors.sol";
-
+import {Structs} from "../utils/DexUtils.sol";
 
 interface IPair {
     function token0() external view returns (address);

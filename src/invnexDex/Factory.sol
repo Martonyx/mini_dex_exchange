@@ -2,8 +2,9 @@
 pragma solidity 0.8.20;
 
 import {Pair} from "./Pair.sol";
+import {DexErrors} from "../utils/DexUtils.sol";
 
-contract Factory {
+contract Factory is DexErrors {
     address public feeTo;
     address public feeToSetter;
     address public router;
@@ -16,7 +17,7 @@ contract Factory {
     event RouterInitialized(address indexed router); 
 
     modifier ensure() {
-        require(msg.sender == feeToSetter, "Factory: FORBIDDEN");
+        if (msg.sender != feeToSetter) revert Factory_Forbidden();
         _;
     }
 
@@ -31,18 +32,18 @@ contract Factory {
     }
 
     function setRouter(address _router) external ensure {
-        require(_router != address(0), "Factory: Zero address");
+        if (_router == address(0)) revert Factory_ZeroAddress();
         router = _router;
         emit RouterInitialized(_router);
     }
 
     function createPair(address tokenA, address tokenB) external returns (address pair) {
-        require(router != address(0), "Factory: ROUTER_NOT_INITIALIZED"); 
-        require(tokenA != tokenB, "Factory: IDENTICAL_ADDRESSES");
+        if (router == address(0)) revert Factory_RouterNotInitialized();
+        if (tokenA == tokenB) revert Factory_IdenticalAddresses();
 
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        require(token0 != address(0), "Factory: ZERO_ADDRESS");
-        require(getPair[token0][token1] == address(0), "Factory: PAIR_EXISTS");
+        if (token0 == address(0)) revert Factory_ZeroAddress();
+        if (getPair[token0][token1] != address(0)) revert Factory_PairExists();
 
         pair = address(new Pair(token0, token1, address(this)));
 
@@ -54,17 +55,17 @@ contract Factory {
     }
 
     function setFeeTo(address _feeTo) external ensure {
-        require(_feeTo != address(0), "Factory: feeTo zero address");
+        if (_feeTo == address(0)) revert Factory_ZeroAddress();
         feeTo = _feeTo;
     }
 
     function setDexFee(uint256 _fee) external ensure {
-        require(_fee > 0, "Factory: fee cannot be zero");
+        if (_fee == 0) revert Factory_FeeCannotBeZero();
         feePercentage = _fee;
     }
 
     function setFeeToSetter(address _feeToSetter) external ensure {
-        require(_feeToSetter != address(0), "Factory: feeTo zero address");
+        if (_feeToSetter == address(0)) revert Factory_ZeroAddress();
         feeToSetter = _feeToSetter;
     }
 }

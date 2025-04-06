@@ -11,9 +11,8 @@ contract DeployRouter is Script {
 
         address factoryAddress = 0x86293364a4A2a3929C93d9bCa1Be623c0D00Eb2f;
         address usyt = 0x9F1A0317BE662e848668278688ffC013b9c26F0e;
-        address oracle = 0x9F1A0317BE662e848668278688ffC013b9c26F0e;
 
-        Router router = new Router(factoryAddress, usyt, oracle);
+        Router router = new Router(factoryAddress, usyt);
 
         vm.stopBroadcast();
         

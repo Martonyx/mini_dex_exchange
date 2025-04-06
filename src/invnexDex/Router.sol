@@ -6,33 +6,40 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IFactory} from "../interfaces/IFactory.sol";
 import {IPair} from "../interfaces/IPair.sol";
-import {IAPIConsumer} from "../interfaces/IOracle.sol";
-import {Structs} from "../utils/dexErrors.sol";
+import {Structs, DexErrors} from "../utils/DexUtils.sol";
 
-contract Router is ReentrancyGuard {
+contract Router is ReentrancyGuard, DexErrors {
 
     using Math for uint256;
 
-    IAPIConsumer public immutable priceOracle;
-
     address public factory;
-    address public USTY;
-    uint256 public totalFee = 3;
-    uint256 public threshold = 90;
+    address public USYT;
+    uint256 constant DENOMINATOR = 1000;
+    uint256 constant TOTAL_FEE = 3;
+    uint256 constant MAX_SLIPPAGE = 1000;
+    uint256 constant MIN_SLIPPAGE = 5;
 
     event LiquidityAdded(address indexed pair, uint256 amountA, uint256 amountB, uint256 liquidity);
     event LiquidityRemoved(address indexed pair, uint256 amountA, uint256 amountB);
     event SwapExecuted(address indexed pair, address indexed to, uint256 amountIn, uint256 amountOut);
 
-    constructor(address _factory, address _usyt, address _oracle) {
-        priceOracle = IAPIConsumer(_oracle);
+    constructor(address _factory, address _usyt) {
         factory = _factory;
-        USTY = _usyt;
+        USYT = _usyt;
     }
 
     modifier ensure(address tokenA, address tokenB) {
-        require(tokenA != tokenB, "Router: IDENTICAL_ADDRESSES");
-        require(tokenA != address(0) && tokenB != address(0), "Router: ZERO_ADDRESS");
+        if (tokenA == tokenB) {
+            revert Router_IdenticalAddresses();
+        }
+        if (tokenA == address(0) || tokenB == address(0)) {
+            revert Router_ZeroAddress();
+        }
+        _;
+    }
+
+    modifier ensureDeadline(uint256 _deadline) {
+        if (block.timestamp > _deadline) revert Router_DeadlineExpired();
         _;
     }
 
@@ -72,7 +79,6 @@ contract Router is ReentrancyGuard {
     ) external nonReentrant ensure(tokenA, tokenB) returns (uint256 amountA, uint256 amountB) {
         address pair = _pairFor(tokenA, tokenB);
 
-        IERC20(pair).transferFrom(msg.sender, pair, liquidity);
         (amountA, amountB) = IPair(pair).burn(msg.sender, liquidity);
 
         emit LiquidityRemoved(pair, amountA, amountB);
@@ -83,36 +89,38 @@ contract Router is ReentrancyGuard {
         address[] calldata _path,
         address to,
         uint256 slippage,
-        uint256 deadline
-    ) external nonReentrant {
-        require(block.timestamp <= deadline, "Router: EXPIRED");
-        require(_path.length == 2, "Router: INVALID_PATH");
+        uint256 _deadline
+    ) external nonReentrant ensureDeadline(_deadline) {
+        if (_path.length != 2) revert Router_InvalidPath();
 
         (address[] memory path, bool isUSYTPath) = _adjustPath(_path);
-        address inputToken = path[0];
-        address outputToken = path[path.length - 1];
+        Structs.UserParams memory params;
+        params.inputToken = path[0];
+        params.outputToken = path[path.length - 1];
+        address pair = _pairFor(params.inputToken, params.outputToken);
+        params.balanceBefore = IERC20(params.outputToken).balanceOf(to);
 
         if (isUSYTPath) {
-            address[] memory newAPath = path;
-            newAPath[0] = inputToken;
-            newAPath[1] = USTY;
-            IERC20(inputToken).transferFrom(msg.sender, _pairFor(inputToken, USTY), amountIn);
+            address[] memory newAPath = new address[](2);
+            newAPath[0] = params.inputToken;
+            newAPath[1] = USYT;
+            IERC20(params.inputToken).transferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
             _swap(newAPath, address(this), slippage);
 
-            uint256 etkBalance = IERC20(USTY).balanceOf(address(this));
+            uint256 etkBalance = IERC20(USYT).balanceOf(address(this));
 
-            address[] memory newBPath = path;
-            newBPath[0] = USTY;
-            newBPath[1] = outputToken;
-            IERC20(USTY).transfer(_pairFor(USTY, outputToken), etkBalance);
+            address[] memory newBPath = new address[](2);
+            newBPath[0] = USYT;
+            newBPath[1] = params.outputToken;
+            IERC20(USYT).transfer(_pairFor(USYT, params.outputToken), etkBalance);
             _swap(newBPath, to, slippage);
         } else {
-            IERC20(inputToken).transferFrom(msg.sender, _pairFor(inputToken, outputToken), amountIn);
+            IERC20(params.inputToken).transferFrom(msg.sender, pair, amountIn);
             _swap(path, to, slippage);
         }
-
-        uint256 amountOut = IERC20(outputToken).balanceOf(to);
-        emit SwapExecuted(_pairFor(inputToken, path[1]), to, amountIn, amountOut);
+    
+        params.amountOut = IERC20(params.outputToken).balanceOf(to) - params.balanceBefore;
+        emit SwapExecuted(pair, to, amountIn, params.amountOut);
     }
 
     function _swap(address[] memory path, address _to, uint256 slippage) private {
@@ -126,7 +134,11 @@ contract Router is ReentrancyGuard {
             params.fee1 = Bparams.fee1;
             params.recipient = Bparams.recipient;
             params.slippageTolerance = slippage;
+            params.minAmount0Out = calculateSlippage(params.amount0Out, params.slippageTolerance);
+            params.minAmount1Out = calculateSlippage(params.amount1Out, params.slippageTolerance);
 
+            if (params.amount0Out < params.minAmount0Out) revert Router_SlippageExceeded();
+            if (params.amount1Out < params.minAmount1Out) revert Router_SlippageExceeded();
             IPair(Bparams.pair).swap(params);
         }
     }
@@ -140,15 +152,15 @@ contract Router is ReentrancyGuard {
         params.output = path[i + 1];
         params.pair = _pairFor(params.input, params.output);
 
-        (params.amountIn, params.amountOut, params.feeAmount) = _getAmounts(params.input, params.output, params.pair);
+        (params.amountIn, params.amountOut, params.feeAmount) = _getAmounts(params.input, params.pair);
         (params.amount0Out, params.amount1Out) = _getSwapOutputs(params.input, params.amountOut, params.pair);
-        (params.fee0, params.fee1) = _getSwapOutputs(params.input, params.feeAmount, params.pair);
+        (params.fee0, params.fee1) = _getFeesOutputs(params.input, params.feeAmount, params.pair);
 
         params.recipient = _getRecipient(i, pathLength, _to, params.output, path);
         return params;
     }
 
-    function _getAmounts(address input, address output, address pair) 
+    function _getAmounts(address input, address pair) 
         private 
         view 
         returns (uint256 amountIn, uint256 amountOut, uint256 feeAmount) 
@@ -160,8 +172,8 @@ contract Router is ReentrancyGuard {
             : (reserve1, reserve0);
 
         amountIn = IERC20(input).balanceOf(pair) - reserveIn;
-        
-        (amountOut, feeAmount) = _getAmountOut(amountIn, reserveIn, reserveOut, input, output);
+
+        (amountOut, feeAmount) = _getAmountOut(amountIn, reserveIn, reserveOut);
     }
 
     function _getSwapOutputs(
@@ -175,47 +187,67 @@ contract Router is ReentrancyGuard {
             : (amountOut, uint256(0));
     }
 
+    function _getFeesOutputs(
+        address input,
+        uint256 feeOut,
+        address pair
+    ) private view returns (uint256 fee0Out, uint256 fee1Out) {
+        address token0 = IPair(pair).token0();
+        (fee0Out, fee1Out) = input == token0
+            ? (feeOut, uint256(0))
+            : (uint256(0), feeOut);
+    }
+
     function _getAmountOut(
         uint256 amountIn, 
         uint256 reserveIn, 
-        uint256 reserveOut,
-        address tokenIn, 
-        address tokenOut
+        uint256 reserveOut
     ) private view returns (uint256 amountOut, uint256 feeAmount) {
-        require(amountIn > 0, "Router: INSUFFICIENT_INPUT_AMOUNT");
-        require(reserveIn > 0 && reserveOut > 0, "Router: INSUFFICIENT_LIQUIDITY");
+        if (amountIn <= 0) revert Router_InsufficientInputAmount();
+        if (reserveIn == 0 || reserveOut == 0) revert Router_InsufficientLiquidity();
 
         Structs.AmountOutParams memory params;
-        params.amountIn = amountIn;
         params.reserveIn = reserveIn;
         params.reserveOut = reserveOut;
 
-        (params.priceIn, params.priceOut) = getSpotPrice(tokenIn, tokenOut);
-
         params.feeToPortion = IFactory(factory).feePercentage();
-        params.lpFee = totalFee - params.feeToPortion;
+        params.lpFee = TOTAL_FEE - params.feeToPortion;
         
-        params.feeAmount = params.amountIn.mulDiv(params.feeToPortion, 1000, Math.Rounding.Floor);
-        params.amountInWithFee = params.amountIn.mulDiv(1000 - params.lpFee, 1000, Math.Rounding.Floor);
-
-        params.effectiveAmountIn = params.amountInWithFee.mulDiv(params.priceIn, params.priceOut, Math.Rounding.Floor);
+        params.feeAmount = amountIn.mulDiv(params.feeToPortion, DENOMINATOR, Math.Rounding.Floor);
+        params.amountIn = amountIn - params.feeAmount;
+        params.amountInWithFee = params.amountIn.mulDiv(DENOMINATOR - params.lpFee, DENOMINATOR, Math.Rounding.Floor);
         
-        params.amountOut = reserveOut.mulDiv(params.effectiveAmountIn, reserveIn + params.effectiveAmountIn, Math.Rounding.Floor);
+        params.amountOut = reserveOut.mulDiv(params.amountInWithFee, reserveIn + params.amountInWithFee, Math.Rounding.Floor);
         
         return (params.amountOut, params.feeAmount);
     }
 
-    function getSpotPrice(address tokenA, address tokenB) public view returns (uint256 priceA, uint256 priceB) {
-        (uint256 oraclePriceA, uint256 lastUpdatedA) = priceOracle.getLastUpdatedPrice(tokenA);
-        (uint256 oraclePriceB, uint256 lastUpdatedB) = priceOracle.getLastUpdatedPrice(tokenB);
+    function getSpotPriceAandB(address tokenA, address tokenB) public view returns (uint256 priceA, uint256 priceB) {
+        address pair = _pairFor(tokenA, tokenB);
+        if (pair == address(0)) revert Router_NOT_LISTED_IN_THE_DEX();
+        (uint112 reserveA, uint112 reserveB,) = IPair(pair).getReserves();
+        if (reserveA == 0 || reserveB == 0) revert Router_InsufficientLiquidity();
 
-        require ((lastUpdatedA >= block.timestamp - threshold) && (lastUpdatedB >= block.timestamp - threshold), "Router: thresholdExceeded");
+        uint256 DECIMALS = 1e18;
+        
+        priceA = (reserveB * DECIMALS) / reserveA;
+        priceB = (reserveA * DECIMALS) / reserveB;
+        
+        return (priceA, priceB);
+    }
 
-        if (oraclePriceA > 0 && oraclePriceB > 0) {
-            return (oraclePriceA, oraclePriceB);
-        } else {
-        revert("Router: Invalid oracle prices");
-        }
+    function getSpotPriceInUSYT(address token) public view returns (uint256 priceInUSYT) {
+        address pair = _pairFor(token, USYT);
+        if (pair == address(0)) revert Router_NOT_LISTED_IN_THE_DEX();
+        
+        (uint112 reserveToken, uint112 reserveUSYT,) = IPair(pair).getReserves();
+        if (reserveToken == 0 || reserveUSYT == 0) revert Router_InsufficientLiquidity();
+
+        uint256 DECIMALS = 1e18;
+        
+        priceInUSYT = (reserveUSYT * DECIMALS) / reserveToken;
+        
+        return priceInUSYT;
     }
 
     function _getRecipient(
@@ -226,6 +258,15 @@ contract Router is ReentrancyGuard {
         address[] memory path
     ) private view returns (address) {
         return i == pathLength - 2 ? _to : _pairFor(output, path[i + 2]);
+    }
+
+    function calculateSlippage(
+        uint256 amountOut, 
+        uint256 slippageTolerance
+    ) internal pure returns (uint256 minAmountOut) {
+        if (slippageTolerance > MAX_SLIPPAGE) revert Router_InvalidSlippageTolerance();
+        if (slippageTolerance < MIN_SLIPPAGE) revert Router_InvalidSlippageTolerance();
+        minAmountOut = amountOut * (MAX_SLIPPAGE - slippageTolerance) / MAX_SLIPPAGE;
     }
 
     function _optimalAmounts(
@@ -242,14 +283,13 @@ contract Router is ReentrancyGuard {
                 (amountA, amountB) = (amountADesired, amountBOptimal);
             } else {
                 uint256 amountAOptimal = amountBDesired.mulDiv(reserveA, reserveB, Math.Rounding.Floor);
-                require(amountAOptimal <= amountADesired, "Router: INSUFFICIENT_LIQUIDITY");
+                if(amountAOptimal > amountADesired) revert Router_InsufficientLiquidity();
                 (amountA, amountB) = (amountAOptimal, amountBDesired);
             }
         }
     }
 
     function _adjustPath(address[] memory _path) private view returns (address[] memory, bool) {
-        address[] memory path = _path;
         bool isUSYTPath;
 
         if (_pairFor(_path[0], _path[1]) != address(0)) {
@@ -257,12 +297,19 @@ contract Router is ReentrancyGuard {
             return (_path, isUSYTPath);
         }
 
-        if (_pairFor(_path[0], USTY) != address(0) && _pairFor(USTY, _path[1]) != address(0)) {
+        if (_pairFor(_path[0], USYT) != address(0) && _pairFor(USYT, _path[1]) != address(0)) {
             isUSYTPath = true;
         } else {
-            revert("Router: NO_SWAP_PATH_AVAILABLE");
+            revert Router_NO_SWAP_PATH_AVAILABLE();
         }
 
-        return (path, isUSYTPath);
+        return (_path, isUSYTPath);
+    }
+
+    function getPairAddress(address tokenA, address tokenB) external view returns (address pair) {
+        pair = _pairFor(tokenA, tokenB);
+        if (pair == address(0)) revert Router_PairNotExists();
+
+        return pair;
     }
 }
