@@ -18,6 +18,7 @@ A decentralized exchange (DEX) implementation with core swapping and liquidity p
 ## Contracts
 
 ## Architecture
+
 │ Factory  │───▶│ Pair │◀───│ Router │
 
                     ▲
