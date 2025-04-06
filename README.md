@@ -17,7 +17,7 @@ A decentralized exchange (DEX) implementation with core swapping and liquidity p
 
 ## Contracts
 
-    Architecture
+## Architecture
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   Factory   │───▶│    Pair     │◀───│   Router    │
 └─────────────┘    └─────────────┘    └─────────────┘
@@ -27,6 +27,12 @@ A decentralized exchange (DEX) implementation with core swapping and liquidity p
                  ┌───────────────┐
                  │ ERC20 Tokens  │
                  └───────────────┘
+
+### Component Relationships:
+- **Factory**: Creates new Pair contracts
+- **Pair**: Manages individual token pools (liquidity pools)
+- **Router**: Main interface for users (swaps, liquidity management)
+- **ERC20 Tokens**: External token contracts that interact with the DEX
 
 ### Router
 
