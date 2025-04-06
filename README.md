@@ -57,7 +57,7 @@ The main entry point for all exchange operations. Handles:
 ### Fee Structure
 
 - Total fee: 0.3%
-- Protocol fee portion: Configurable via Factory
+- Protocol fee portion: Goes to the team
 - Remaining fee: Goes to liquidity providers
 
 ### Security Features
