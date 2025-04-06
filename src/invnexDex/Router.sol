@@ -213,11 +213,11 @@ contract Router is ReentrancyGuard, DexErrors {
         params.feeToPortion = IFactory(factory).feePercentage();
         params.lpFee = TOTAL_FEE - params.feeToPortion;
         
-        params.feeAmount = amountIn.mulDiv(params.feeToPortion, DENOMINATOR, Math.Rounding.Floor);
+        params.feeAmount = amountIn.mulDiv(params.feeToPortion, DENOMINATOR);
         params.amountIn = amountIn - params.feeAmount;
-        params.amountInWithFee = params.amountIn.mulDiv(DENOMINATOR - params.lpFee, DENOMINATOR, Math.Rounding.Floor);
+        params.amountInWithFee = params.amountIn.mulDiv(DENOMINATOR - params.lpFee, DENOMINATOR);
         
-        params.amountOut = reserveOut.mulDiv(params.amountInWithFee, reserveIn + params.amountInWithFee, Math.Rounding.Floor);
+        params.amountOut = reserveOut.mulDiv(params.amountInWithFee, reserveIn + params.amountInWithFee);
         
         return (params.amountOut, params.feeAmount);
     }

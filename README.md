@@ -1,66 +1,70 @@
-## Foundry
+# Mini DEX Exchange
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Solidity Version](https://img.shields.io/badge/Solidity-0.8.20-lightgrey.svg)](https://soliditylang.org/)
 
-Foundry consists of:
+A decentralized exchange (DEX) implementation with core swapping and liquidity provision functionality, built on Ethereum.
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Features
 
-## Documentation
+- 🔄 Token swapping with adjustable slippage tolerance
+- 💧 Add/remove liquidity from pools
+- 📊 Spot price calculations
+- 🔄 USYT token routing for indirect swaps
+- 🔒 Reentrancy protection
+- ⏳ Deadline-based transaction execution
+- 💰 Automated fee distribution (0.3% total fee)
 
-https://book.getfoundry.sh/
+## Contracts
 
-## Usage
+    Architecture
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Factory   │───▶│    Pair     │◀───│   Router    │
+└─────────────┘    └─────────────┘    └─────────────┘
+                         ▲
+                         │
+                         ▼
+                 ┌───────────────┐
+                 │ ERC20 Tokens  │
+                 └───────────────┘
 
-### Build
+### Router
 
-```shell
-$ forge build
-```
+The main entry point for all exchange operations. Handles:
 
-### Test
+- `addLiquidity`: Deposit tokens to create a new pool or add to an existing one
+- `removeLiquidity`: Withdraw your liquidity from a pool
+- `swapExactTokensForTokens`: Execute token swaps with exact input amounts
+- `getSpotPrice`: Query current pool prices
+- `getPairAddress`: Get the address of a token pair's pool
 
-```shell
-$ forge test
-```
+## Technical Details
 
-### Format
+### State Variables
 
-```shell
-$ forge fmt
-```
+| Parameter          | Value | Description                          |
+|--------------------|-------|--------------------------------------|
+| TOTAL_FEE          | 3     | 0.3% total trading fee               |
+| DENOMINATOR        | 1000  | Fee calculation base                 |
+| MAX_SLIPPAGE       | 1000  | Maximum allowed slippage (100%)      |
+| MIN_SLIPPAGE       | 5     | Minimum allowed slippage (0.5%)      |
 
-### Gas Snapshots
+### Fee Structure
 
-```shell
-$ forge snapshot
-```
+- Total fee: 0.3%
+- Protocol fee portion: Configurable via Factory
+- Remaining fee: Goes to liquidity providers
 
-### Anvil
+### Security Features
 
-```shell
-$ anvil
-```
+- Reentrancy guards on all external functions
+- Input validation (zero address, identical tokens)
+- Deadline checks for transactions
+- Slippage protection
+- Proper fee calculations using fixed-point math
 
-### Deploy
+## Installation
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+1. Install dependencies:
+```bash
+npm install @openzeppelin/contracts
