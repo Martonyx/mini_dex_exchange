@@ -2,8 +2,8 @@
 pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
-import "../../src/invnexDex/Factory.sol"; 
-import "../../src/invnexDex/Pair.sol";
+import "../src/invnexDex/Factory.sol"; 
+import "../src/invnexDex/Pair.sol";
 
 contract FactoryTest is Test {
 
