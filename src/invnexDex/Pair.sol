@@ -155,6 +155,13 @@ contract Pair is ERC20, DexErrors {
         return details;
     }
 
+    function sync() external {
+        _update(
+            IERC20(token0).balanceOf(address(this)),
+            IERC20(token1).balanceOf(address(this))
+        );
+    }
+
     function getReserves() public view returns (uint112, uint112, uint32) {
         return (_reserves.reserve0, _reserves.reserve1, _reserves.blockTimestampLast);
     }
