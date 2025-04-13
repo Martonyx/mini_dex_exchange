@@ -1,25 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IFactory} from "../interfaces/IFactory.sol";
 import {Structs, DexErrors} from "../utils/DexUtils.sol";
 
 contract Pair is ERC20, DexErrors {
+
+    using SafeERC20 for IERC20;
+
     address public immutable token0;
     address public immutable token1;
-    address public router;    
     address public immutable factory;
+    address public router;    
 
-    uint112 private reserve0;
-    uint112 private reserve1;
-    uint32 private blockTimestampLast;
-
-    struct SwapDetails {
-        uint256 amount0In;
-        uint256 amount1In;
-    }
+    Structs.Reserves private _reserves;
 
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
     event Burn(address indexed to, uint256 amount0, uint256 amount1);
@@ -78,8 +75,8 @@ contract Pair is ERC20, DexErrors {
         if (amount0 == 0 || amount1 == 0) revert Pair_InsufficientAmountBurned();
 
         _burn(to, amount);
-        IERC20(token0).transfer(to, amount0);
-        IERC20(token1).transfer(to, amount1); 
+        IERC20(token0).safeTransfer(to, amount0);
+        IERC20(token1).safeTransfer(to, amount1); 
 
         balance0 = IERC20(token0).balanceOf(address(this));
         balance1 = IERC20(token1).balanceOf(address(this));
@@ -88,21 +85,20 @@ contract Pair is ERC20, DexErrors {
         emit Burn(to, amount0, amount1);
     }
 
-    function swap(Structs.PairSwapParams memory params) external onlyRouter onlyValidAmounts(params.amount0Out, params.amount1Out) {
+    function swap(Structs.PairSwapParams calldata params) external onlyRouter onlyValidAmounts(params.amount0Out, params.amount1Out) {
         if (params.recipient == address(0)) revert Pair_InvalidTo();
-        if (params.slippageTolerance >= 1000) revert Pair_InvalidSlippageTolerance();
 
         (uint112 _reserve0, uint112 _reserve1,) = getReserves();
         if (params.amount0Out >= _reserve0 || params.amount1Out >= _reserve1) revert Pair_InsufficientLiquidity();
 
-        SwapDetails memory details = _calculateAmountsIn(
-            _reserve0, _reserve1,
-            params
-        );
-        
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
 
+        Structs.SwapDetails memory details = _calculateAmountsIn(
+            _reserve0, _reserve1, balance0, balance1,
+            params
+        );
+        
         uint256 balanceA = balance0 - params.amount0Out - params.fee0;
         uint256 balanceB = balance1 - params.amount1Out - params.fee1;
 
@@ -122,29 +118,33 @@ contract Pair is ERC20, DexErrors {
         uint256 fee1, 
         address to
     ) private {
-        if (amount0AfterFee > 0) IERC20(token0).transfer(to, amount0AfterFee);
-        if (amount1AfterFee > 0) IERC20(token1).transfer(to, amount1AfterFee);
+        if (amount0AfterFee > 0) IERC20(token0).safeTransfer(to, amount0AfterFee);
+        if (amount1AfterFee > 0) IERC20(token1).safeTransfer(to, amount1AfterFee);
 
         address _feeTo = IFactory(factory).feeTo();
         if (_feeTo == address(0)) revert Pair_FeeToNotSet();
-        if (fee0 > 0) IERC20(token0).transfer(_feeTo, fee0);
-        if (fee1 > 0) IERC20(token1).transfer(_feeTo, fee1);
+        if (fee0 > 0) IERC20(token0).safeTransfer(_feeTo, fee0);
+        if (fee1 > 0) IERC20(token1).safeTransfer(_feeTo, fee1);
     }
 
     function _update(uint256 balance0, uint256 balance1) private {
         if (balance0 > type(uint112).max || balance1 > type(uint112).max) revert Pair_Overflow();
 
-        reserve0 = uint112(balance0);
-        reserve1 = uint112(balance1);
-        blockTimestampLast = uint32(block.timestamp);
-        emit Sync(reserve0, reserve1);
+        _reserves = Structs.Reserves({
+            reserve0: uint112(balance0),
+            reserve1: uint112(balance1),
+            blockTimestampLast: uint32(block.timestamp)
+        });
+        emit Sync(uint112(balance0), uint112(balance1));
     }
 
-    function _calculateAmountsIn(uint112 _reserve0, uint112 _reserve1, Structs.PairSwapParams memory params)
-        private view returns (SwapDetails memory details) {
-        uint256 balance0 = IERC20(token0).balanceOf(address(this));
-        uint256 balance1 = IERC20(token1).balanceOf(address(this));
-
+    function _calculateAmountsIn(
+        uint112 _reserve0, 
+        uint112 _reserve1, 
+        uint256 balance0,
+        uint256 balance1,
+        Structs.PairSwapParams memory params)
+        private pure returns (Structs.SwapDetails memory details) {
         details.amount0In = balance0 > (_reserve0 - params.amount0Out - params.fee0)
             ? balance0 - (_reserve0 - params.amount0Out - params.fee0)
             : 0;
@@ -156,21 +156,23 @@ contract Pair is ERC20, DexErrors {
     }
 
     function getReserves() public view returns (uint112, uint112, uint32) {
-        return (reserve0, reserve1, blockTimestampLast);
+        return (_reserves.reserve0, _reserves.reserve1, _reserves.blockTimestampLast);
     }
 
-    function sqrt(uint256 x) private pure returns (uint256) {
-        uint256 z = (x + 1) / 2;
-        uint256 y = x;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
+    function sqrt(uint256 y) private pure returns (uint256 z) {
+        if (y > 3) {
+            z = y;
+            uint256 x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
         }
-        return y;
     }
 
     function min(uint256 a, uint256 b) private pure returns (uint256) {
         return a < b ? a : b;
     }
 }
-
