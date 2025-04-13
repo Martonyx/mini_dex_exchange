@@ -18,10 +18,11 @@ contract Router is ReentrancyGuard, DexErrors {
     uint256 constant TOTAL_FEE = 3;
     uint256 constant MAX_SLIPPAGE = 1000;
     uint256 constant MIN_SLIPPAGE = 5;
+    uint256 constant DECIMALS = 1e18;
 
     event LiquidityAdded(address indexed pair, uint256 amountA, uint256 amountB, uint256 liquidity);
     event LiquidityRemoved(address indexed pair, uint256 amountA, uint256 amountB);
-    event SwapExecuted(address indexed pair, address indexed to, uint256 amountIn, uint256 amountOut);
+    event SwapExecuted(address indexed to, uint256 amountIn, uint256 amountOut);
 
     constructor(address _factory, address _usyt) {
         factory = _factory;
@@ -29,12 +30,8 @@ contract Router is ReentrancyGuard, DexErrors {
     }
 
     modifier ensure(address tokenA, address tokenB) {
-        if (tokenA == tokenB) {
-            revert Router_IdenticalAddresses();
-        }
-        if (tokenA == address(0) || tokenB == address(0)) {
-            revert Router_ZeroAddress();
-        }
+        if (tokenA == tokenB) revert Router_IdenticalAddresses();
+        if (tokenA == address(0) || tokenB == address(0)) revert Router_ZeroAddress();
         _;
     }
 
@@ -97,7 +94,6 @@ contract Router is ReentrancyGuard, DexErrors {
         Structs.UserParams memory params;
         params.inputToken = path[0];
         params.outputToken = path[path.length - 1];
-        address pair = _pairFor(params.inputToken, params.outputToken);
         params.balanceBefore = IERC20(params.outputToken).balanceOf(to);
 
         if (isUSYTPath) {
@@ -107,20 +103,20 @@ contract Router is ReentrancyGuard, DexErrors {
             IERC20(params.inputToken).transferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
             _swap(newAPath, address(this), slippage);
 
-            uint256 etkBalance = IERC20(USYT).balanceOf(address(this));
+            uint256 USYTBalance = IERC20(USYT).balanceOf(address(this));
 
             address[] memory newBPath = new address[](2);
             newBPath[0] = USYT;
             newBPath[1] = params.outputToken;
-            IERC20(USYT).transfer(_pairFor(USYT, params.outputToken), etkBalance);
+            IERC20(USYT).transfer(_pairFor(USYT, params.outputToken), USYTBalance);
             _swap(newBPath, to, slippage);
         } else {
-            IERC20(params.inputToken).transferFrom(msg.sender, pair, amountIn);
+            IERC20(params.inputToken).transferFrom(msg.sender, _pairFor(params.inputToken, params.outputToken), amountIn);
             _swap(path, to, slippage);
         }
     
         params.amountOut = IERC20(params.outputToken).balanceOf(to) - params.balanceBefore;
-        emit SwapExecuted(pair, to, amountIn, params.amountOut);
+        emit SwapExecuted(to, amountIn, params.amountOut);
     }
 
     function _swap(address[] memory path, address _to, uint256 slippage) private {
@@ -227,8 +223,6 @@ contract Router is ReentrancyGuard, DexErrors {
         if (pair == address(0)) revert Router_NOT_LISTED_IN_THE_DEX();
         (uint112 reserveA, uint112 reserveB,) = IPair(pair).getReserves();
         if (reserveA == 0 || reserveB == 0) revert Router_InsufficientLiquidity();
-
-        uint256 DECIMALS = 1e18;
         
         priceA = (reserveB * DECIMALS) / reserveA;
         priceB = (reserveA * DECIMALS) / reserveB;
@@ -242,8 +236,6 @@ contract Router is ReentrancyGuard, DexErrors {
         
         (uint112 reserveToken, uint112 reserveUSYT,) = IPair(pair).getReserves();
         if (reserveToken == 0 || reserveUSYT == 0) revert Router_InsufficientLiquidity();
-
-        uint256 DECIMALS = 1e18;
         
         priceInUSYT = (reserveUSYT * DECIMALS) / reserveToken;
         
@@ -278,11 +270,11 @@ contract Router is ReentrancyGuard, DexErrors {
         if (reserveA == 0 && reserveB == 0) {
             (amountA, amountB) = (amountADesired, amountBDesired);
         } else {
-            uint256 amountBOptimal = amountADesired.mulDiv(reserveB, reserveA, Math.Rounding.Floor);
+            uint256 amountBOptimal = amountADesired.mulDiv(reserveB, reserveA);
             if (amountBOptimal <= amountBDesired) {
                 (amountA, amountB) = (amountADesired, amountBOptimal);
             } else {
-                uint256 amountAOptimal = amountBDesired.mulDiv(reserveA, reserveB, Math.Rounding.Floor);
+                uint256 amountAOptimal = amountBDesired.mulDiv(reserveA, reserveB);
                 if(amountAOptimal > amountADesired) revert Router_InsufficientLiquidity();
                 (amountA, amountB) = (amountAOptimal, amountBDesired);
             }
@@ -290,20 +282,15 @@ contract Router is ReentrancyGuard, DexErrors {
     }
 
     function _adjustPath(address[] memory _path) private view returns (address[] memory, bool) {
-        bool isUSYTPath;
-
         if (_pairFor(_path[0], _path[1]) != address(0)) {
-            isUSYTPath = false;
-            return (_path, isUSYTPath);
+            return (_path, false);
         }
 
         if (_pairFor(_path[0], USYT) != address(0) && _pairFor(USYT, _path[1]) != address(0)) {
-            isUSYTPath = true;
+            return (_path, true);
         } else {
             revert Router_NO_SWAP_PATH_AVAILABLE();
         }
-
-        return (_path, isUSYTPath);
     }
 
     function getPairAddress(address tokenA, address tokenB) external view returns (address pair) {

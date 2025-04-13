@@ -17,7 +17,6 @@ abstract contract DexErrors {
     error Pair_InsufficientLiquidity();
     error Pair_InsufficientAmountBurned();
     error Pair_InvalidTo();
-    error Pair_InvalidSlippageTolerance();
     error Pair_InsufficientInputAmount();
     error Pair_K();
     error Pair_FeeToNotSet();
@@ -82,5 +81,16 @@ abstract contract Structs {
         uint256 feeAmount;
         uint256 amountInWithFee;
         uint256 amountOut;
+    }
+
+    struct SwapDetails {
+        uint256 amount0In;
+        uint256 amount1In;
+    }
+
+    struct Reserves {
+        uint112 reserve0;
+        uint112 reserve1;
+        uint32 blockTimestampLast;
     }
 }
