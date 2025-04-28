@@ -9,6 +9,8 @@ abstract contract DexErrors {
     error Factory_IdenticalAddresses();
     error Factory_PairExists();
     error Factory_FeeCannotBeZero();
+    error Factory_InvalidAddress();
+    error Factory_Invalid_Range();
 
     error Pair_InsufficientAmount();
     error Pair_CallerNotRouter();
@@ -21,8 +23,11 @@ abstract contract DexErrors {
     error Pair_K();
     error Pair_FeeToNotSet();
     error Pair_Overflow();
+    error Pair_CannotWithdrawPairTokens();
+    error Pair_AlreadyInitialized();
 
     error Router_IdenticalAddresses();
+    error Router_Unauthorized();
     error Router_ZeroAddress();
     error Router_DeadlineExpired();
     error Router_InvalidPath();

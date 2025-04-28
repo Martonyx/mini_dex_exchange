@@ -3,12 +3,12 @@ pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
 import "forge-std/StdCheats.sol";
-import "../src/invnexDex/Router.sol";
-import "../src/invnexDex/Factory.sol";
-import "../src/invnexDex/Pair.sol";
+import "src/invnexDex/Router.sol";
+import "src/invnexDex/Factory.sol";
+import "src/invnexDex/Pair.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import{USYT} from "Invnex_token/USYT.sol";
-import {DexErrors} from "../src/utils/DexUtils.sol";
+import {DexErrors} from "src/utils/DexUtils.sol";
 
 contract RouterTest is Test, DexErrors {
     Router router;
@@ -230,6 +230,14 @@ contract RouterTest is Test, DexErrors {
         uint256 expectedPrice = (100 ether * 1e18) / 500 ether;
 
         assertEq(price, expectedPrice, "Incorrect token price in USYT");
+    }
+
+    // Test that predicted address matches actual deployed address
+    function testComputePairAddressMatchesDeployment() public {
+        vm.prank(user);
+        factory.createPair(address(tokenA), address(tokenB));
+        address predictedPair = router.getPairAddress(address(tokenA), address(tokenB));
+        assertTrue(factory.getPair(address(tokenA), address(tokenB)) == predictedPair, "computed address is wrong");
     }
 }
 

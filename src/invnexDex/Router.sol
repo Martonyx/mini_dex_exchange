@@ -4,13 +4,16 @@ pragma solidity 0.8.20;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IFactory} from "../interfaces/IFactory.sol";
 import {IPair} from "../interfaces/IPair.sol";
+import {Pair} from "./Pair.sol";
 import {Structs, DexErrors} from "../utils/DexUtils.sol";
 
 contract Router is ReentrancyGuard, DexErrors {
 
     using Math for uint256;
+    using SafeERC20 for IERC20;
 
     address public factory;
     address public USYT;
@@ -40,6 +43,11 @@ contract Router is ReentrancyGuard, DexErrors {
         _;
     }
 
+    modifier OnlyFeeToSetter(){
+        if(msg.sender != IFactory(factory).feeToSetter()) revert Router_Unauthorized();
+        _;
+    }
+
     function _sortTokens(address tokenA, address tokenB) ensure(tokenA, tokenB) private pure returns (address token0, address token1) {
         (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
     }
@@ -62,8 +70,8 @@ contract Router is ReentrancyGuard, DexErrors {
 
         (amountA, amountB) = _optimalAmounts(pair, amountADesired, amountBDesired);
 
-        IERC20(tokenA).transferFrom(msg.sender, pair, amountA);
-        IERC20(tokenB).transferFrom(msg.sender, pair, amountB);
+        IERC20(tokenA).safeTransferFrom(msg.sender, pair, amountA);
+        IERC20(tokenB).safeTransferFrom(msg.sender, pair, amountB);
 
         liquidity = IPair(pair).mint(msg.sender);
         emit LiquidityAdded(pair, amountA, amountB, liquidity);
@@ -100,7 +108,7 @@ contract Router is ReentrancyGuard, DexErrors {
             address[] memory newAPath = new address[](2);
             newAPath[0] = params.inputToken;
             newAPath[1] = USYT;
-            IERC20(params.inputToken).transferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
+            IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
             _swap(newAPath, address(this), slippage);
 
             uint256 USYTBalance = IERC20(USYT).balanceOf(address(this));
@@ -108,10 +116,10 @@ contract Router is ReentrancyGuard, DexErrors {
             address[] memory newBPath = new address[](2);
             newBPath[0] = USYT;
             newBPath[1] = params.outputToken;
-            IERC20(USYT).transfer(_pairFor(USYT, params.outputToken), USYTBalance);
+            IERC20(USYT).safeTransfer(_pairFor(USYT, params.outputToken), USYTBalance);
             _swap(newBPath, to, slippage);
         } else {
-            IERC20(params.inputToken).transferFrom(msg.sender, _pairFor(params.inputToken, params.outputToken), amountIn);
+            IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, params.outputToken), amountIn);
             _swap(path, to, slippage);
         }
     
@@ -219,8 +227,8 @@ contract Router is ReentrancyGuard, DexErrors {
     }
 
     function getSpotPriceAandB(address tokenA, address tokenB) public view returns (uint256 priceA, uint256 priceB) {
-        address pair = _pairFor(tokenA, tokenB);
-        if (pair == address(0)) revert Router_NOT_LISTED_IN_THE_DEX();
+        address pair = _computePairAddress(tokenA, tokenB);
+        if (!_isContract(pair)) revert Router_NOT_LISTED_IN_THE_DEX();
         (uint112 reserveA, uint112 reserveB,) = IPair(pair).getReserves();
         if (reserveA == 0 || reserveB == 0) revert Router_InsufficientLiquidity();
         
@@ -231,8 +239,8 @@ contract Router is ReentrancyGuard, DexErrors {
     }
 
     function getSpotPriceInUSYT(address token) public view returns (uint256 priceInUSYT) {
-        address pair = _pairFor(token, USYT);
-        if (pair == address(0)) revert Router_NOT_LISTED_IN_THE_DEX();
+        address pair = _computePairAddress(token, USYT);
+        if (!_isContract(pair)) revert Router_NOT_LISTED_IN_THE_DEX();
         
         (uint112 reserveToken, uint112 reserveUSYT,) = IPair(pair).getReserves();
         if (reserveToken == 0 || reserveUSYT == 0) revert Router_InsufficientLiquidity();
@@ -240,6 +248,11 @@ contract Router is ReentrancyGuard, DexErrors {
         priceInUSYT = (reserveUSYT * DECIMALS) / reserveToken;
         
         return priceInUSYT;
+    }
+
+    function emergencyWithdrawal(address tokenA, address tokenB, uint256 amount) external OnlyFeeToSetter {
+        address pair = _pairFor(tokenA, tokenB);
+        IPair(pair).emergencyWithdraw(tokenA, amount);
     }
 
     function _getRecipient(
@@ -282,11 +295,11 @@ contract Router is ReentrancyGuard, DexErrors {
     }
 
     function _adjustPath(address[] memory _path) private view returns (address[] memory, bool) {
-        if (_pairFor(_path[0], _path[1]) != address(0)) {
+        if (_isContract(_pairFor(_path[0], _path[1])))  {
             return (_path, false);
         }
 
-        if (_pairFor(_path[0], USYT) != address(0) && _pairFor(USYT, _path[1]) != address(0)) {
+        if (_isContract(_pairFor(_path[0], USYT)) && _isContract(_pairFor(USYT, _path[1]))) {
             return (_path, true);
         } else {
             revert Router_NO_SWAP_PATH_AVAILABLE();
@@ -294,9 +307,29 @@ contract Router is ReentrancyGuard, DexErrors {
     }
 
     function getPairAddress(address tokenA, address tokenB) external view returns (address pair) {
-        pair = _pairFor(tokenA, tokenB);
-        if (pair == address(0)) revert Router_PairNotExists();
+        pair = _computePairAddress(tokenA, tokenB);
+        if (!_isContract(pair)) revert Router_PairNotExists();
 
         return pair;
+    }
+
+    function _computePairAddress(address tokenA, address tokenB) private view returns (address predictedPair) {
+        bytes32 initCodeHash = keccak256(type(Pair).creationCode);
+        (address token0, address token1) = _sortTokens(tokenA, tokenB);
+        bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+        predictedPair = address(uint160(uint256(keccak256(abi.encodePacked(
+            bytes1(0xff),
+            factory,
+            salt,
+            initCodeHash
+        )))));
+    }
+
+    function _isContract(address addr) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(addr)
+        }
+        return size > 0;
     }
 }

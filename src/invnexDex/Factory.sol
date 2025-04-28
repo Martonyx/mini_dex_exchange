@@ -2,19 +2,23 @@
 pragma solidity 0.8.20;
 
 import {Pair} from "./Pair.sol";
+import {IPair} from "../interfaces/IPair.sol";
 import {DexErrors} from "../utils/DexUtils.sol";
 
 contract Factory is DexErrors {
     address public feeTo;
     address public feeToSetter;
+    address public pendingFeeToSetter;
     address public router;
     uint256 public feePercentage;
 
     mapping(address => mapping(address => address)) public getPair;
-    address[] public allPairs;
+    address[] private allPairs;
 
     event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
     event RouterInitialized(address indexed router); 
+    event OwnershipTransferStarted(address indexed currentOwner, address indexed pendingOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier ensure() {
         if (msg.sender != feeToSetter) revert Factory_Forbidden();
@@ -45,7 +49,14 @@ contract Factory is DexErrors {
         if (token0 == address(0)) revert Factory_ZeroAddress();
         if (getPair[token0][token1] != address(0)) revert Factory_PairExists();
 
-        pair = address(new Pair(token0, token1, address(this)));
+        bytes memory bytecode = type(Pair).creationCode;
+        bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+
+        assembly {
+            pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
+        }
+
+        IPair(pair).initialize(token0, token1, address(this));
 
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair;
@@ -64,8 +75,31 @@ contract Factory is DexErrors {
         feePercentage = _fee;
     }
 
-    function setFeeToSetter(address _feeToSetter) external ensure {
+    function StartFeeToSetterTransfer(address _feeToSetter) external ensure {
         if (_feeToSetter == address(0)) revert Factory_ZeroAddress();
-        feeToSetter = _feeToSetter;
+        pendingFeeToSetter = _feeToSetter;
+        emit OwnershipTransferStarted(feeToSetter, pendingFeeToSetter);
+    }
+
+    function claimFeeToSetterOwnership() external {
+        if (msg.sender != pendingFeeToSetter) revert Factory_InvalidAddress();
+        address oldFeeToSetter = feeToSetter;
+        feeToSetter = msg.sender;
+        pendingFeeToSetter = address(0);
+        emit OwnershipTransferred(oldFeeToSetter, feeToSetter);
+    }
+
+    function getPairs(uint256 lowerLimit, uint256 upperLimit) external view returns (address[] memory) {
+        if(lowerLimit > upperLimit) revert Factory_Invalid_Range();
+
+        if(upperLimit > allPairs.length) upperLimit = allPairs.length;
+        uint256 resultSize = upperLimit - lowerLimit;
+        address[] memory result = new address[](resultSize);
+        
+        for (uint256 i = lowerLimit; i < upperLimit; i++) {
+            result[i - lowerLimit] = allPairs[i];
+        }
+        
+        return result;
     }
 }

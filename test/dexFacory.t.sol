@@ -2,8 +2,8 @@
 pragma solidity 0.8.20;
 
 import "forge-std/Test.sol";
-import "../src/invnexDex/Factory.sol"; 
-import "../src/invnexDex/Pair.sol";
+import "src/invnexDex/Factory.sol"; 
+import "src/invnexDex/Pair.sol";
 
 contract FactoryTest is Test {
 
@@ -83,7 +83,11 @@ contract FactoryTest is Test {
     function testSetFeeToSetter() public {
         address newFeeToSetter = address(0xABCD);
         vm.prank(feeToSetter);
-        factory.setFeeToSetter(newFeeToSetter);
+        factory.StartFeeToSetterTransfer(newFeeToSetter);
+        assertEq(factory.feeToSetter(), feeToSetter);
+
+        vm.prank(newFeeToSetter);
+        factory.claimFeeToSetterOwnership();
         assertEq(factory.feeToSetter(), newFeeToSetter);
     }
 }

@@ -11,12 +11,13 @@ contract Pair is ERC20, DexErrors {
 
     using SafeERC20 for IERC20;
 
-    address public immutable token0;
-    address public immutable token1;
-    address public immutable factory;
+    address public token0;
+    address public token1;
+    address public factory;
     address public router;    
 
     Structs.Reserves private _reserves;
+    bool public initialized;
 
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
     event Burn(address indexed to, uint256 amount0, uint256 amount1);
@@ -33,7 +34,15 @@ contract Pair is ERC20, DexErrors {
         _;
     }
 
-    constructor(address _token0, address _token1, address _factory) ERC20("Invnex Liquidity Token", "ILP") {
+    modifier onlyOnce() {
+        if (initialized) revert Pair_AlreadyInitialized();
+        _;
+        initialized = true;
+    }
+
+    constructor() ERC20("Invnex Liquidity Token", "ILP") {}
+
+    function initialize(address _token0, address _token1, address _factory) external onlyOnce {
         token0 = _token0;
         token1 = _token1;
         factory = _factory;
@@ -162,6 +171,12 @@ contract Pair is ERC20, DexErrors {
         );
     }
 
+    function emergencyWithdraw(address token, uint256 amount) external onlyRouter {
+        address _feeTo = IFactory(factory).feeTo();
+        if (token == token0 || token == token1) revert Pair_CannotWithdrawPairTokens();
+        IERC20(token).safeTransfer(_feeTo, amount);
+    }
+
     function getReserves() public view returns (uint112, uint112, uint32) {
         return (_reserves.reserve0, _reserves.reserve1, _reserves.blockTimestampLast);
     }
@@ -182,4 +197,5 @@ contract Pair is ERC20, DexErrors {
     function min(uint256 a, uint256 b) private pure returns (uint256) {
         return a < b ? a : b;
     }
+
 }
