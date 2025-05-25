@@ -6,6 +6,7 @@ import {Structs} from "../utils/DexUtils.sol";
 interface IPair {
     function token0() external view returns (address);
     function token1() external view returns (address);
+    function totalSupply() external view returns (uint256);
     function initialize(address _token0, address _token1, address _factory) external;
     function emergencyWithdraw(address token, uint256 amount) external;
     function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);

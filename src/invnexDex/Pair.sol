@@ -68,7 +68,6 @@ contract Pair is ERC20, DexErrors {
 
         _mint(to, liquidity); 
         _update(balance0, balance1);
-        emit Mint(to, amount0, amount1);
     }
 
     function burn(address to, uint256 amount) external onlyRouter returns (uint256 amount0, uint256 amount1) {
@@ -91,7 +90,6 @@ contract Pair is ERC20, DexErrors {
         balance1 = IERC20(token1).balanceOf(address(this));
 
         _update(balance0, balance1);
-        emit Burn(to, amount0, amount1);
     }
 
     function swap(Structs.PairSwapParams calldata params) external onlyRouter onlyValidAmounts(params.amount0Out, params.amount1Out) {

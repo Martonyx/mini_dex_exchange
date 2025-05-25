@@ -61,17 +61,17 @@ contract Router is ReentrancyGuard, DexErrors {
         address tokenA,
         address tokenB,
         uint256 amountADesired,
-        uint256 amountBDesired
-    ) external nonReentrant ensure(tokenA, tokenB) returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        uint256 deadline
+    ) external nonReentrant ensure(tokenA, tokenB) ensureDeadline(deadline) returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         address pair = IFactory(factory).getPair(tokenA, tokenB);
-        if (pair == address(0)) {
-            pair = IFactory(factory).createPair(tokenA, tokenB);
-        }
+        if (pair == address(0)) revert Router_NOT_LISTED_IN_THE_DEX();
 
         (amountA, amountB) = _optimalAmounts(pair, amountADesired, amountBDesired);
-
-        IERC20(tokenA).safeTransferFrom(msg.sender, pair, amountA);
-        IERC20(tokenB).safeTransferFrom(msg.sender, pair, amountB);
+        _validateAmounts(amountA, amountB, amountAMin, amountBMin);
+        _transferTokensToPair(tokenA, tokenB, pair, amountA, amountB);
 
         liquidity = IPair(pair).mint(msg.sender);
         emit LiquidityAdded(pair, amountA, amountB, liquidity);
@@ -80,11 +80,15 @@ contract Router is ReentrancyGuard, DexErrors {
     function removeLiquidity(
         address tokenA,
         address tokenB,
-        uint256 liquidity
-    ) external nonReentrant ensure(tokenA, tokenB) returns (uint256 amountA, uint256 amountB) {
+        uint256 liquidity,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        uint256 deadline
+    ) external nonReentrant ensure(tokenA, tokenB) ensureDeadline(deadline) returns (uint256 amountA, uint256 amountB) {
         address pair = _pairFor(tokenA, tokenB);
 
         (amountA, amountB) = IPair(pair).burn(msg.sender, liquidity);
+        _validateAmounts(amountA, amountB, amountAMin, amountBMin);
 
         emit LiquidityRemoved(pair, amountA, amountB);
     }
@@ -93,7 +97,8 @@ contract Router is ReentrancyGuard, DexErrors {
         uint256 amountIn,
         address[] calldata _path,
         address to,
-        uint256 slippage,
+        uint256 amountAMin,
+        uint256 amountBMin,
         uint256 _deadline
     ) external nonReentrant ensureDeadline(_deadline) {
         if (_path.length != 2) revert Router_InvalidPath();
@@ -109,7 +114,7 @@ contract Router is ReentrancyGuard, DexErrors {
             newAPath[0] = params.inputToken;
             newAPath[1] = USYT;
             IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
-            _swap(newAPath, address(this), slippage);
+            _swap(newAPath, address(this), amountAMin, amountBMin);
 
             uint256 USYTBalance = IERC20(USYT).balanceOf(address(this));
 
@@ -117,17 +122,17 @@ contract Router is ReentrancyGuard, DexErrors {
             newBPath[0] = USYT;
             newBPath[1] = params.outputToken;
             IERC20(USYT).safeTransfer(_pairFor(USYT, params.outputToken), USYTBalance);
-            _swap(newBPath, to, slippage);
+            _swap(newBPath, to, amountAMin, amountBMin);
         } else {
             IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, params.outputToken), amountIn);
-            _swap(path, to, slippage);
+            _swap(path, to, amountAMin, amountBMin);
         }
     
         params.amountOut = IERC20(params.outputToken).balanceOf(to) - params.balanceBefore;
         emit SwapExecuted(to, amountIn, params.amountOut);
     }
 
-    function _swap(address[] memory path, address _to, uint256 slippage) private {
+    function _swap(address[] memory path, address _to, uint256 amountAMin, uint256 amountBMin) private {
         uint256 pathLength = path.length;
         for (uint256 i = 0; i < pathLength - 1; i++) {
             Structs.BeforeSwapParams memory Bparams = _prepareSwapParams(i, path, _to, pathLength);
@@ -137,12 +142,10 @@ contract Router is ReentrancyGuard, DexErrors {
             params.fee0 = Bparams.fee0;
             params.fee1 = Bparams.fee1;
             params.recipient = Bparams.recipient;
-            params.slippageTolerance = slippage;
-            params.minAmount0Out = calculateSlippage(params.amount0Out, params.slippageTolerance);
-            params.minAmount1Out = calculateSlippage(params.amount1Out, params.slippageTolerance);
+            params.minAmount0Out = amountAMin;
+            params.minAmount1Out = amountBMin;
 
-            if (params.amount0Out < params.minAmount0Out) revert Router_SlippageExceeded();
-            if (params.amount1Out < params.minAmount1Out) revert Router_SlippageExceeded();
+            _validateAmounts(params.amount0Out, params.amount1Out, params.minAmount0Out, params.minAmount1Out);
             IPair(Bparams.pair).swap(params);
         }
     }
@@ -213,7 +216,6 @@ contract Router is ReentrancyGuard, DexErrors {
         Structs.AmountOutParams memory params;
         params.reserveIn = reserveIn;
         params.reserveOut = reserveOut;
-
         params.feeToPortion = IFactory(factory).feePercentage();
         params.lpFee = TOTAL_FEE - params.feeToPortion;
         
@@ -267,11 +269,32 @@ contract Router is ReentrancyGuard, DexErrors {
 
     function calculateSlippage(
         uint256 amountOut, 
-        uint256 slippageTolerance
-    ) internal pure returns (uint256 minAmountOut) {
-        if (slippageTolerance > MAX_SLIPPAGE) revert Router_InvalidSlippageTolerance();
-        if (slippageTolerance < MIN_SLIPPAGE) revert Router_InvalidSlippageTolerance();
-        minAmountOut = amountOut * (MAX_SLIPPAGE - slippageTolerance) / MAX_SLIPPAGE;
+        uint256 slippage
+    ) public pure returns (uint256 minAmountOut) {
+        if (slippage > MAX_SLIPPAGE) revert Router_InvalidSlippage();
+        if (slippage < MIN_SLIPPAGE) revert Router_InvalidSlippage();
+        minAmountOut = amountOut * (MAX_SLIPPAGE - slippage) / MAX_SLIPPAGE;
+    }
+
+    function _validateAmounts(
+        uint256 actualA,
+        uint256 actualB,
+        uint256 minA,
+        uint256 minB
+    ) internal pure {
+        if (actualA < minA) revert Router_InsufficientAAmount();
+        if (actualB < minB) revert Router_InsufficientBAmount();
+    }
+
+    function _transferTokensToPair(
+        address tokenA,
+        address tokenB,
+        address pair,
+        uint256 amountA,
+        uint256 amountB
+    ) private {
+        IERC20(tokenA).safeTransferFrom(msg.sender, pair, amountA);
+        IERC20(tokenB).safeTransferFrom(msg.sender, pair, amountB);
     }
 
     function _optimalAmounts(
@@ -292,6 +315,17 @@ contract Router is ReentrancyGuard, DexErrors {
                 (amountA, amountB) = (amountAOptimal, amountBDesired);
             }
         }
+    }
+
+    function getOptimalAmounts(
+        address tokenA,
+        address tokenB,
+        uint256 amountA, 
+        uint256 amountB
+        ) external view returns(uint256 a, uint256 b)
+        {
+        address _pair = _computePairAddress(tokenA, tokenB);
+        (a, b) = _optimalAmounts(_pair, amountA, amountB);
     }
 
     function _adjustPath(address[] memory _path) private view returns (address[] memory, bool) {
@@ -331,5 +365,56 @@ contract Router is ReentrancyGuard, DexErrors {
             size := extcodesize(addr)
         }
         return size > 0;
+    }
+
+    function getAmountsOut(
+        uint256 amountIn,
+        address[] calldata path
+    ) external view returns (uint256[] memory amounts) {
+        if (path.length != 2) revert Router_InvalidPath();
+        
+        amounts = new uint256[](path.length);
+        amounts[0] = amountIn;
+
+        (address[] memory adjustedPath, bool isUSYTPath) = _adjustPath(path);
+        
+        if (isUSYTPath) {
+            // First swap: path[0] → USYT
+            (amounts[1]) = _getSwapOutput(amounts[0], adjustedPath[0], USYT);
+            
+            // Second swap: USYT → path[1]
+            (amounts[1]) = _getSwapOutput(amounts[1], USYT, adjustedPath[1]);
+        } else {
+            // Direct swap: path[0] → path[1]
+            (amounts[1]) = _getSwapOutput(amounts[0], adjustedPath[0], adjustedPath[1]);
+        }
+    }
+
+    function _getSwapOutput(
+        uint256 amountIn,
+        address inputToken,
+        address outputToken
+    ) private view returns (uint256 amountOut) {
+        address pair = _computePairAddress(inputToken, outputToken);
+        (uint112 reserveA, uint112 reserveB,) = IPair(pair).getReserves();
+        (uint112 reserveIn, uint112 reserveOut) = inputToken == IPair(pair).token0() 
+            ? (reserveA, reserveB)
+            : (reserveB, reserveA);
+
+        (amountOut,) = _getAmountOut(amountIn, reserveIn, reserveOut);
+    }
+
+    function getAmountsForLiquidityRemoval(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity
+    ) external view returns (uint256 amountA, uint256 amountB) {
+        address pair = _pairFor(tokenA, tokenB);
+        
+        (uint256 reserveA, uint256 reserveB,) = IPair(pair).getReserves();
+        uint256 totalSupply = IPair(pair).totalSupply();
+        
+        amountA = (liquidity * reserveA) / totalSupply;
+        amountB = (liquidity * reserveB) / totalSupply;
     }
 }

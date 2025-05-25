@@ -3,7 +3,7 @@
 pragma solidity 0.8.20;
 
 abstract contract DexErrors {
-    error Factory_Forbidden();
+        error Factory_Unauthorized();
     error Factory_ZeroAddress();
     error Factory_RouterNotInitialized();
     error Factory_IdenticalAddresses();
@@ -34,7 +34,9 @@ abstract contract DexErrors {
     error Router_SlippageExceeded();
     error Router_InsufficientInputAmount();
     error Router_InsufficientLiquidity();
-    error Router_InvalidSlippageTolerance();
+    error Router_InsufficientAAmount();
+    error Router_InsufficientBAmount();
+    error Router_InvalidSlippage();
     error Router_NO_SWAP_PATH_AVAILABLE();
     error Router_NOT_LISTED_IN_THE_DEX();
     error Router_PairNotExists();

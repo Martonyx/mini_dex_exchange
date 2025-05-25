@@ -21,7 +21,7 @@ contract Factory is DexErrors {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier ensure() {
-        if (msg.sender != feeToSetter) revert Factory_Forbidden();
+        if (msg.sender != feeToSetter) revert Factory_Unauthorized();
         _;
     }
 
