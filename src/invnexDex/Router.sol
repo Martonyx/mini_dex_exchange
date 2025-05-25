@@ -102,37 +102,36 @@ contract Router is ReentrancyGuard, DexErrors {
     ) external nonReentrant ensureDeadline(_deadline) {
         if (_path.length != 2) revert Router_InvalidPath();
 
+        uint256[] memory amounts = getAmountsOut(amountIn, _path);
+        Structs.PreParams memory params;
+        params.amountOut = amounts[1];        
+        if (params.amountOut < minAmountOut) revert Router_InsufficientAmountOut();
         (address[] memory path, bool isUSYTPath) = _adjustPath(_path);
-        Structs.UserParams memory params;
         params.inputToken = path[0];
         params.outputToken = path[path.length - 1];
-        params.balanceBefore = IERC20(params.outputToken).balanceOf(to);
 
         if (isUSYTPath) {
             address[] memory newAPath = new address[](2);
             newAPath[0] = params.inputToken;
             newAPath[1] = USYT;
-            IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
-            _swap(newAPath, address(this));
+            _swap(newAPath, address(this), amountIn);
 
             uint256 USYTBalance = IERC20(USYT).balanceOf(address(this));
 
             address[] memory newBPath = new address[](2);
             newBPath[0] = USYT;
             newBPath[1] = params.outputToken;
-            IERC20(USYT).safeTransfer(_pairFor(USYT, params.outputToken), USYTBalance);
-            _swap(newBPath, to);
+            _swap(newBPath, to, USYTBalance);
         } else {
-            IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, params.outputToken), amountIn);
-            _swap(path, to);
+            _swap(path, to, amountIn);
         }
     
-        params.amountOut = IERC20(params.outputToken).balanceOf(to) - params.balanceBefore;
-        if (params.amountOut < minAmountOut) revert Router_InsufficientAmountOut();
         emit SwapExecuted(to, amountIn, params.amountOut);
     }
 
-    function _swap(address[] memory path, address _to) private {
+    function _swap(address[] memory path, address _to, uint256 amountIn) private {
+        address pair = _pairFor(path[0], path[1]);
+        IERC20(path[0]).safeTransferFrom(msg.sender, pair, amountIn);        
         uint256 pathLength = path.length;
         for (uint256 i = 0; i < pathLength - 1; i++) {
             Structs.BeforeSwapParams memory Bparams = _prepareSwapParams(i, path, _to, pathLength);
@@ -367,7 +366,7 @@ contract Router is ReentrancyGuard, DexErrors {
     function getAmountsOut(
         uint256 amountIn,
         address[] calldata path
-    ) external view returns (uint256[] memory amounts) {
+    ) public view returns (uint256[] memory amounts) {
         if (path.length != 2) revert Router_InvalidPath();
         
         amounts = new uint256[](path.length);
@@ -377,13 +376,13 @@ contract Router is ReentrancyGuard, DexErrors {
         
         if (isUSYTPath) {
             // First swap: path[0] → USYT
-            (amounts[1]) = _getSwapOutput(amounts[0], adjustedPath[0], USYT);
+            amounts[1] = _getSwapOutput(amounts[0], adjustedPath[0], USYT);
             
             // Second swap: USYT → path[1]
-            (amounts[1]) = _getSwapOutput(amounts[1], USYT, adjustedPath[1]);
+            amounts[1] = _getSwapOutput(amounts[1], USYT, adjustedPath[1]);
         } else {
             // Direct swap: path[0] → path[1]
-            (amounts[1]) = _getSwapOutput(amounts[0], adjustedPath[0], adjustedPath[1]);
+            amounts[1] = _getSwapOutput(amounts[0], adjustedPath[0], adjustedPath[1]);
         }
     }
 

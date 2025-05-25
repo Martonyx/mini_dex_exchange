@@ -56,8 +56,7 @@ abstract contract Structs {
         uint256 slippageTolerance;
     }
 
-    struct UserParams {
-        uint256 balanceBefore;
+    struct PreParams {
         uint256 amountIn;
         uint256 amountOut;
         address inputToken;
