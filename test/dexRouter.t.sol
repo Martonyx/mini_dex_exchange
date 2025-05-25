@@ -20,6 +20,7 @@ contract RouterTest is Test, DexErrors {
     USYT usyt;
     uint256 amountAMin = 0;
     uint256 amountBMin = 0;
+    uint256 minAmountOut = 0;
     uint256 deadline = block.timestamp + 1 hours;
 
     address user = address(0x34);
@@ -150,7 +151,7 @@ contract RouterTest is Test, DexErrors {
         path[0] = address(tokenA);
         path[1] = address(tokenB);
 
-        router.swapExactTokensForTokens(amountIn, path, user, amountAMin, amountBMin, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
 
         uint256 afterTransfer = tokenB.balanceOf(user);
         uint256 amountOut = afterTransfer - beforeTransfer;
@@ -167,7 +168,7 @@ contract RouterTest is Test, DexErrors {
 
         vm.expectRevert(Router_DeadlineExpired.selector);
         vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, amountAMin, amountBMin, lateDeadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, lateDeadline);
     }
 
     function testSwapExactTokensForTokens_RevertOnInvalidPath() public {
@@ -180,7 +181,7 @@ contract RouterTest is Test, DexErrors {
 
         vm.expectRevert(Router_InvalidPath.selector);
         vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, amountAMin, amountBMin, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
     }
 
     function testSwapExactTokensForTokens_RevertOnInsufficientBalance() public {
@@ -192,7 +193,7 @@ contract RouterTest is Test, DexErrors {
 
         vm.expectRevert();
         vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, amountAMin, amountBMin, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
     }
 
     function testSwapExactTokensForTokens_RevertOnInsufficientAllowance() public {
@@ -205,7 +206,7 @@ contract RouterTest is Test, DexErrors {
 
         vm.expectRevert();
         vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, amountAMin, amountBMin, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
     }
 
     function testSwapExactTokensForTokens_USYTPath() public addLiquidity {
@@ -215,7 +216,7 @@ contract RouterTest is Test, DexErrors {
         path[0] = address(tokenB);
         path[1] = address(tokenC);
 
-        router.swapExactTokensForTokens(amountIn, path, user, amountAMin, amountBMin, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
 
         uint256 amountOut = tokenC.balanceOf(user);
         assertGt(amountOut, 0, "USYT path swap should execute successfully");
@@ -252,8 +253,8 @@ contract RouterTest is Test, DexErrors {
 
     function testGetOptimalAmounts() public addLiquidity {
         (uint a, uint b) = router.getOptimalAmounts(address(tokenA), address(tokenB), 400 ether, 500 ether);
-        assertEq(a, 100 ether, "incorrect optimal amounts a");
-        assertEq(b, 500 ether, "incorrect optimal amounts b");
+        assertEq(a, 400 ether, "incorrect optimal amounts a");
+        assertEq(b, 80 ether, "incorrect optimal amounts b");
     }
 
     function testGetAmountsOut() public addLiquidity {

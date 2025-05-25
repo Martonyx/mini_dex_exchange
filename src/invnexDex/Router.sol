@@ -97,8 +97,7 @@ contract Router is ReentrancyGuard, DexErrors {
         uint256 amountIn,
         address[] calldata _path,
         address to,
-        uint256 amountAMin,
-        uint256 amountBMin,
+        uint256 minAmountOut,
         uint256 _deadline
     ) external nonReentrant ensureDeadline(_deadline) {
         if (_path.length != 2) revert Router_InvalidPath();
@@ -114,7 +113,7 @@ contract Router is ReentrancyGuard, DexErrors {
             newAPath[0] = params.inputToken;
             newAPath[1] = USYT;
             IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, USYT), amountIn);
-            _swap(newAPath, address(this), amountAMin, amountBMin);
+            _swap(newAPath, address(this));
 
             uint256 USYTBalance = IERC20(USYT).balanceOf(address(this));
 
@@ -122,17 +121,18 @@ contract Router is ReentrancyGuard, DexErrors {
             newBPath[0] = USYT;
             newBPath[1] = params.outputToken;
             IERC20(USYT).safeTransfer(_pairFor(USYT, params.outputToken), USYTBalance);
-            _swap(newBPath, to, amountAMin, amountBMin);
+            _swap(newBPath, to);
         } else {
             IERC20(params.inputToken).safeTransferFrom(msg.sender, _pairFor(params.inputToken, params.outputToken), amountIn);
-            _swap(path, to, amountAMin, amountBMin);
+            _swap(path, to);
         }
     
         params.amountOut = IERC20(params.outputToken).balanceOf(to) - params.balanceBefore;
+        if (params.amountOut < minAmountOut) revert Router_InsufficientAmountOut();
         emit SwapExecuted(to, amountIn, params.amountOut);
     }
 
-    function _swap(address[] memory path, address _to, uint256 amountAMin, uint256 amountBMin) private {
+    function _swap(address[] memory path, address _to) private {
         uint256 pathLength = path.length;
         for (uint256 i = 0; i < pathLength - 1; i++) {
             Structs.BeforeSwapParams memory Bparams = _prepareSwapParams(i, path, _to, pathLength);
@@ -142,10 +142,7 @@ contract Router is ReentrancyGuard, DexErrors {
             params.fee0 = Bparams.fee0;
             params.fee1 = Bparams.fee1;
             params.recipient = Bparams.recipient;
-            params.minAmount0Out = amountAMin;
-            params.minAmount1Out = amountBMin;
 
-            _validateAmounts(params.amount0Out, params.amount1Out, params.minAmount0Out, params.minAmount1Out);
             IPair(Bparams.pair).swap(params);
         }
     }
