@@ -18,9 +18,6 @@ contract RouterTest is Test, DexErrors {
     MockERC20 tokenC;
     address pair;
     USYT usyt;
-    uint256 amountAMin = 0;
-    uint256 amountBMin = 0;
-    uint256 minAmountOut = 0;
     uint256 deadline = block.timestamp + 1 hours;
 
     address user = address(0x34);
@@ -51,14 +48,21 @@ contract RouterTest is Test, DexErrors {
     }
 
     modifier addLiquidity() {
+        (uint256 minA, uint256 minB) = router.getMinimumAmountsWithSlippage(
+            address(tokenA),
+            address(tokenB),
+            500 ether,
+            100 ether,
+            5
+        );
         vm.startPrank(user);
         router.addLiquidity(
             address(tokenA),
             address(tokenB),
             500 ether,
             100 ether,
-            amountAMin, 
-            amountBMin,
+            minA, 
+            minB,
             block.timestamp + 1 hours
         );
 
@@ -67,8 +71,8 @@ contract RouterTest is Test, DexErrors {
             address(tokenB),
             500 ether,
             100 ether,
-            amountAMin, 
-            amountBMin,
+            minA, 
+            minB,
             block.timestamp + 1 hours
         );
 
@@ -77,22 +81,29 @@ contract RouterTest is Test, DexErrors {
             address(tokenC),
             500 ether,
             100 ether,
-            amountAMin, 
-            amountBMin,
+            minA, 
+            minB,
             block.timestamp + 1 hours
         );
         _;
     }
 
     function testAddLiquidity() public {
+        (uint256 minA, uint256 minB) = router.getMinimumAmountsWithSlippage(
+            address(tokenA),
+            address(tokenB),
+            100 ether,
+            100 ether,
+            5
+        );
         vm.prank(user);
         (uint256 amountA, uint256 amountB, uint256 liquidity) = router.addLiquidity(
             address(tokenA),
             address(tokenB),
             100 ether,
             100 ether,
-            amountAMin, 
-            amountBMin,
+            minA, 
+            minB,
             block.timestamp + 1 hours
         );
 
@@ -114,13 +125,27 @@ contract RouterTest is Test, DexErrors {
     }
 
     function testFailAddLiquidityIdenticalTokens() public {
+        (uint256 minA, uint256 minB) = router.getMinimumAmountsWithSlippage(
+            address(tokenA),
+            address(tokenB),
+            100 ether,
+            100 ether,
+            5
+        );
         vm.prank(user);
-        router.addLiquidity(address(tokenA), address(tokenA), 100 ether, 100 ether, amountAMin, amountBMin, block.timestamp + 1 hours);
+        router.addLiquidity(address(tokenA), address(tokenA), 100 ether, 100 ether, minA, minB, block.timestamp + 1 hours);
     }
 
     function testFailAddLiquidityZeroAddress() public {
+        (uint256 minA, uint256 minB) = router.getMinimumAmountsWithSlippage(
+            address(tokenA),
+            address(tokenB),
+            100 ether,
+            100 ether,
+            5
+        );
         vm.prank(user);
-        router.addLiquidity(address(0), address(tokenB), 100 ether, 100 ether, amountAMin, amountBMin, block.timestamp + 1 hours);
+        router.addLiquidity(address(0), address(tokenB), 100 ether, 100 ether, minA, minB, block.timestamp + 1 hours);
     }
 
     function testRemoveLiquidity() public addLiquidity {
@@ -128,13 +153,18 @@ contract RouterTest is Test, DexErrors {
         uint256 lpBalance = IERC20(pair).balanceOf(user);
 
         IERC20(pair).approve(address(router), lpBalance);
-
+        (uint256 minA, uint256 minB) = router.getMinimumLiquidityRemovalAmounts(
+            address(tokenA),
+            address(tokenB),
+            lpBalance,
+            5
+        );
         (uint256 amountA, uint256 amountB) = router.removeLiquidity(
             address(tokenA),
             address(tokenB),
             lpBalance,
-            amountAMin, 
-            amountBMin,
+            minA, 
+            minB,
             block.timestamp + 1 hours
         );
         vm.stopPrank();
@@ -151,14 +181,19 @@ contract RouterTest is Test, DexErrors {
         path[0] = address(tokenA);
         path[1] = address(tokenB);
 
-        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
+        uint256 minOut = router.getMinAmountOut(
+            amountIn,
+            path,
+            5
+        );
+        router.swapExactTokensForTokens(amountIn, path, user, minOut, deadline);
 
         uint256 afterTransfer = tokenB.balanceOf(user);
         uint256 amountOut = afterTransfer - beforeTransfer;
         assertGt(amountOut, 0, "Swap should produce output tokens");
     }
 
-    function testSwapExactTokensForTokens_RevertOnExpiredDeadline() public {
+    function testSwapExactTokensForTokens_RevertOnExpiredDeadline() public addLiquidity {
         uint256 amountIn = 1e18;
         uint256 lateDeadline = block.timestamp - 1;
         
@@ -166,37 +201,51 @@ contract RouterTest is Test, DexErrors {
         path[0] = address(tokenA);
         path[1] = address(tokenB);
 
+        uint256 minOut = router.getMinAmountOut(
+            amountIn,
+            path,
+            5
+        );
         vm.expectRevert(Router_DeadlineExpired.selector);
-        vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, lateDeadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minOut, lateDeadline);
     }
 
-    function testSwapExactTokensForTokens_RevertOnInvalidPath() public {
+    function testSwapExactTokensForTokens_RevertOnInvalidPath() public addLiquidity {
         uint256 amountIn = 1e18;
         
         address[] memory path = new address[](3);
         path[0] = address(tokenA);
         path[1] = address(usyt);
         path[2] = address(tokenB);
-
+        
         vm.expectRevert(Router_InvalidPath.selector);
-        vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
+        uint256 minOut = router.getMinAmountOut(
+            amountIn,
+            path,
+            5
+        );
+        vm.expectRevert(Router_InvalidPath.selector);
+        router.swapExactTokensForTokens(amountIn, path, user, minOut, deadline);
     }
 
-    function testSwapExactTokensForTokens_RevertOnInsufficientBalance() public {
+    function testSwapExactTokensForTokens_RevertOnInsufficientBalance() public addLiquidity {
         uint256 amountIn = 1e30;
         
         address[] memory path = new address[](2);
         path[0] = address(tokenA);
         path[1] = address(tokenB);
 
+        uint256 minOut = router.getMinAmountOut(
+            amountIn,
+            path,
+            5
+        );
         vm.expectRevert();
         vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minOut, deadline);
     }
 
-    function testSwapExactTokensForTokens_RevertOnInsufficientAllowance() public {
+    function testSwapExactTokensForTokens_RevertOnInsufficientAllowance() public addLiquidity {
         tokenA.approve(address(router), 0);
         
         uint256 amountIn = 1e18;
@@ -204,9 +253,13 @@ contract RouterTest is Test, DexErrors {
         path[0] = address(tokenA);
         path[1] = address(tokenB);
 
+        uint256 minOut = router.getMinAmountOut(
+            amountIn,
+            path,
+            5
+        );
         vm.expectRevert();
-        vm.prank(user);
-        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
+        router.swapExactTokensForTokens(amountIn, path, user, minOut, deadline);
     }
 
     function testSwapExactTokensForTokens_USYTPath() public addLiquidity {
@@ -216,7 +269,12 @@ contract RouterTest is Test, DexErrors {
         path[0] = address(tokenB);
         path[1] = address(tokenC);
 
-        router.swapExactTokensForTokens(amountIn, path, user, minAmountOut, deadline);
+        uint256 minOut = router.getMinAmountOut(
+            amountIn,
+            path,
+            5
+        );
+        router.swapExactTokensForTokens(amountIn, path, user, minOut, deadline);
 
         uint256 amountOut = tokenC.balanceOf(user);
         assertGt(amountOut, 0, "USYT path swap should execute successfully");

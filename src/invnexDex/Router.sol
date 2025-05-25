@@ -318,7 +318,7 @@ contract Router is ReentrancyGuard, DexErrors {
         address tokenB,
         uint256 amountA, 
         uint256 amountB
-        ) external view returns(uint256 a, uint256 b)
+        ) public view returns(uint256 a, uint256 b)
         {
         address _pair = _computePairAddress(tokenA, tokenB);
         (a, b) = _optimalAmounts(_pair, amountA, amountB);
@@ -404,7 +404,7 @@ contract Router is ReentrancyGuard, DexErrors {
         address tokenA,
         address tokenB,
         uint256 liquidity
-    ) external view returns (uint256 amountA, uint256 amountB) {
+    ) public view returns (uint256 amountA, uint256 amountB) {
         address pair = _pairFor(tokenA, tokenB);
         
         (uint256 reserveA, uint256 reserveB,) = IPair(pair).getReserves();
@@ -412,5 +412,37 @@ contract Router is ReentrancyGuard, DexErrors {
         
         amountA = (liquidity * reserveA) / totalSupply;
         amountB = (liquidity * reserveB) / totalSupply;
+    }
+
+    function getMinimumAmountsWithSlippage(
+        address tokenA,
+        address tokenB,
+        uint256 amountA,
+        uint256 amountB,
+        uint256 slippage
+    ) external view returns (uint256 minAmountA, uint256 minAmountB) {
+        (uint256 optimalA, uint256 optimalB) = getOptimalAmounts(tokenA, tokenB, amountA, amountB);
+        minAmountA = calculateSlippage(optimalA, slippage);
+        minAmountB = calculateSlippage(optimalB, slippage);
+    }
+
+    function getMinimumLiquidityRemovalAmounts(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity,
+        uint256 slippage
+    ) external view returns (uint256 minAmountA, uint256 minAmountB) {
+        (uint256 amountA, uint256 amountB) = getAmountsForLiquidityRemoval(tokenA, tokenB, liquidity);
+        minAmountA = calculateSlippage(amountA, slippage);
+        minAmountB = calculateSlippage(amountB, slippage);
+    }
+
+    function getMinAmountOut(
+        uint256 amountIn,
+        address[] calldata path,
+        uint256 slippage
+    ) public view returns (uint256 minAmountOut) {
+        uint256[] memory amounts = getAmountsOut(amountIn, path);
+        return calculateSlippage(amounts[1], slippage);
     }
 }

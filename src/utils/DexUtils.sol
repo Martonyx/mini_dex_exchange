@@ -51,13 +51,9 @@ abstract contract Structs {
         uint256 fee0;
         uint256 fee1;
         address recipient;
-        uint256 minAmount0Out; 
-        uint256 minAmount1Out; 
-        uint256 slippageTolerance;
     }
 
     struct PreParams {
-        uint256 amountIn;
         uint256 amountOut;
         address inputToken;
         address outputToken;
@@ -74,8 +70,6 @@ abstract contract Structs {
         uint256 amount1Out;
         uint256 fee0;
         uint256 fee1;
-        uint256 amount0AOut;
-        uint256 amount1BOut;
         address recipient;
     }
 
